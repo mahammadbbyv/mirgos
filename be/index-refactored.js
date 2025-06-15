@@ -15,7 +15,7 @@ const lobbyManager = require('./utils/lobbyManager');
 const gameManager = require('./utils/gameManager');
 
 const app = express();
-const port = 3000;
+const port = 3002; // Use a different port to avoid conflicts with the original server
 require('dotenv').config();
 
 if (!process.env.JWT_SECRET) {
@@ -28,20 +28,29 @@ const jwtSecret = process.env.JWT_SECRET;
 app.use(express.json());
 app.use(cookieParser());
 app.use(cors({
-    origin: [
-        "http://localhost:5173",
-        "https://mirgos.loca.lt",
-        "http://26.122.92.136:5173",
-        "http://25.47.56.187:5173",
-        "http://192.168.78.1:5173",
-        "http://192.168.61.1:5173",
-        "http://172.20.10.2:5173",
-        "http://172.19.176.1:5173"
-    ],
+    origin: true, // Allow all origins - more permissive for development
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true
 }));
+
+// Setup HTTP server and Socket.IO
+const server = http.createServer(app);
+const io = new Server(server, {
+    cors: {
+        origin: true, // Allow all origins - more permissive for development
+        methods: ["GET", "POST", "PUT", "DELETE"],
+        allowedHeaders: ["Content-Type", "Authorization"],
+        credentials: true,
+            "http://192.168.61.1:5173",
+            "http://172.20.10.2:5173",
+            "http://172.19.176.1:5173"
+        ],
+        methods: ['GET', 'POST', 'PUT', 'DELETE'],
+        credentials: true
+    },
+    transports: ['websocket', 'polling'] // Support both WebSocket and HTTP long-polling
+});
 
 // Database configuration
 const dbConfig = {
@@ -252,72 +261,78 @@ const lobbyController = {
     }
 };
 
-// Create HTTP server and Socket.io instance
-const server = http.createServer(app);
-const io = new Server(server, {
-    cors: {
-        origin: '*',
-        methods: ['GET', 'POST', 'PUT', 'DELETE'],
-        allowedHeaders: ['Content-Type', 'Authorization'],
-        credentials: true
-    }
-});
-
-// Lobby state in memory (for Socket.io)
+// Initialize lobby state
 const lobbyState = new Map();
 
-// Socket.io connection handler
+// Socket.IO connection handler
 io.on('connection', (socket) => {
-    console.log('Socket connected:', socket.id);
-
+    console.log('A user connected');
+    
+    // --- ENHANCED CHAT SYSTEM ---
+    // Register all enhanced chat handlers
+    chatManager.registerChatHandlers(socket, io, lobbyState);
+    
     // --- LOBBY MANAGEMENT ---
-    socket.on('join_lobby', ({ lobbyId, playerName, country }) => {
-        // Initialize lobby if it doesn't exist
-        if (!lobbyState.has(lobbyId)) {
-            lobbyState.set(lobbyId, lobbyManager.initializeLobby(lobbyId, playerName));
-        }
+    socket.on('create_lobby', ({ playerName }) => {
+        const lobbyId = lobbyManager.generateLobbyId();
+        const lobby = lobbyManager.initializeLobby(lobbyId, playerName);
         
-        const lobby = lobbyState.get(lobbyId);
+        lobbyManager.addPlayer(lobby, playerName);
+        lobbyState.set(lobbyId, lobby);
         
-        // Set host if not set
-        if (!lobby.host) lobby.host = playerName;
-        
-        // Join Socket.io room
         socket.join(lobbyId);
-        
-        // Remove player from any other lobbies they might be in
-        for (const [id, l] of lobbyState.entries()) {
-            if (id !== lobbyId && l.players.has(playerName)) {
-                lobbyManager.removePlayer(l, playerName);
-                io.to(id).emit('lobby', lobbyManager.getLobbyData(l));
-            }
-        }
-        
-        // Add player to this lobby
-        lobbyManager.addPlayer(lobby, playerName, country || '');
-        
-        // Notify all clients in the lobby
-        io.to(lobbyId).emit('lobby', lobbyManager.getLobbyData(lobby));
-        
-        // Store lobby and player info on socket
         socket.lobbyId = lobbyId;
         socket.playerName = playerName;
         
-        // Send game state to the player if game is in progress
-        if (lobby.gameState) {
-            socket.emit('game_state', gameManager.getGameStateForClient(lobby));
+        socket.emit('lobby_created', { lobbyId });
+        io.to(lobbyId).emit('lobby', lobbyManager.getLobbyData(lobby));
+    });
+    
+    socket.on('join_lobby', ({ lobbyId, playerName }) => {
+        const lobby = lobbyState.get(lobbyId);
+        
+        if (!lobby) {
+            socket.emit('error', { message: 'Lobby not found' });
+            return;
+        }
+        
+        if (lobbyManager.addPlayer(lobby, playerName)) {
+            socket.join(lobbyId);
+            socket.lobbyId = lobbyId;
+            socket.playerName = playerName;
+            
+            io.to(lobbyId).emit('lobby', lobbyManager.getLobbyData(lobby));
+            
+            // Send room message about new player
+            const joinMessage = {
+                player: 'System',
+                text: `${playerName} joined the lobby`,
+                time: Date.now(),
+                to: 'all',
+                lobbyId,
+                status: 'sent',
+                id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+            };
+            
+            chatManager.storeMessage(lobby, joinMessage);
+            io.to(lobbyId).emit('room_message', joinMessage);
+            
+            // Send game state to the player if game is in progress
+            if (lobby.gameState) {
+                socket.emit('game_state', gameManager.getGameStateForClient(lobby));
+            }
+        } else {
+            socket.emit('error', { message: 'Could not join lobby' });
         }
     });
-
+    
     socket.on('update_country', ({ lobbyId, playerName, country }) => {
         const lobby = lobbyState.get(lobbyId);
         
         if (lobby && lobbyManager.updatePlayerCountry(lobby, playerName, country)) {
             io.to(lobbyId).emit('lobby', lobbyManager.getLobbyData(lobby));
         }
-    });    // --- ENHANCED CHAT SYSTEM ---
-    // Register all enhanced chat handlers
-    chatManager.registerChatHandlers(socket, io, lobbyState);
+    });
 
     // --- GAME START ---
     socket.on('start_game', ({ lobbyId }) => {
@@ -332,10 +347,12 @@ io.on('connection', (socket) => {
         if (!lobbyManager.allPlayersSelectedCountry(lobby)) {
             io.to(lobbyId).emit('room_message', { 
                 player: 'System', 
-                msg: 'All players must choose a country before starting the game.',
+                text: 'All players must choose a country before starting the game.',
                 time: Date.now(),
                 to: 'all',
-                lobbyId
+                lobbyId,
+                status: 'sent',
+                id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
             });
             return;
         }
@@ -344,10 +361,12 @@ io.on('connection', (socket) => {
         if (lobbyManager.hasDuplicateCountries(lobby)) {
             io.to(lobbyId).emit('room_message', { 
                 player: 'System', 
-                msg: 'Each player must select a different country.',
+                text: 'Each player must select a different country.',
                 time: Date.now(),
                 to: 'all',
-                lobbyId
+                lobbyId,
+                status: 'sent',
+                id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
             });
             return;
         }
@@ -379,7 +398,7 @@ io.on('connection', (socket) => {
         }, 1000);
     });
 
-    // --- ROUND TIME MANAGEMENT ---
+    // Database configuration    // --- ROUND TIME MANAGEMENT ---
     socket.on('request_round_start', ({ lobbyId }) => {
         const lobby = lobbyState.get(lobbyId);
         
@@ -389,132 +408,147 @@ io.on('connection', (socket) => {
             });
         }
     });
+    
+    // Direct request for game state
+    socket.on('request_game_state', ({ lobbyId }) => {
+        const lobby = lobbyState.get(lobbyId);
+        
+        if (lobby && lobby.gameState) {
+            console.log(`Game state requested for lobby ${lobbyId} by ${socket.playerName || 'unknown player'}`);
+            socket.emit('game_state', gameManager.getGameStateForClient(lobby));
+        } else {
+            console.log(`Game state requested for lobby ${lobbyId} but no game state exists`);
+            socket.emit('error', { message: 'Game state not initialized' });
+        }
+    });
 
     // --- PLAYER ACTIONS ---
     socket.on('submit_action', ({ lobbyId, playerName, action }) => {
         const lobby = lobbyState.get(lobbyId);
-        
         if (!lobby || !lobby.gameState) return;
         
-        if (!lobby.gameState.actions[playerName]) {
-            lobby.gameState.actions[playerName] = [];
+        const gameState = lobby.gameState;
+        const country = gameState.playerCountries[playerName]?.en;
+        
+        if (!country) return;
+        
+        // Add the action to the player's action queue
+        if (!gameState.actions[playerName]) {
+            gameState.actions[playerName] = [];
         }
         
-        lobby.gameState.actions[playerName].push(action);
+        // Add metadata to the action
+        const actionWithMeta = {
+            ...action,
+            playerName,
+            country,
+            timestamp: Date.now()
+        };
+        
+        gameState.actions[playerName].push(actionWithMeta);
+        
+        // Emit updated game state to the player
+        socket.emit('game_state', gameManager.getGameStateForClient(lobby));
     });
-
-    // --- TURN MANAGEMENT ---
+    
     socket.on('finish_turn', ({ lobbyId, playerName }) => {
         const lobby = lobbyState.get(lobbyId);
-        
         if (!lobby || !lobby.gameState) return;
         
         // Mark player as finished
         lobby.gameState.finished[playerName] = true;
         
         // Check if all players have finished
-        const allPlayers = Object.keys(lobby.gameState.playerCountries);
-        const allFinished = allPlayers.every(p => lobby.gameState.finished[p]);
+        const allFinished = Object.keys(lobby.gameState.playerCountries).every(
+            player => lobby.gameState.finished[player]
+        );
+        
+        // Get list of players who haven't finished yet
+        const waitingPlayers = Object.keys(lobby.gameState.playerCountries).filter(
+            player => !lobby.gameState.finished[player]
+        );
+        
+        // Broadcast waiting players list
+        io.to(lobbyId).emit('waiting_players', waitingPlayers);
         
         if (allFinished) {
-            // Process actions and update game state
+            // Process all actions and update game state
             gameManager.processActionsAndUpdateGameState(lobby);
             
-            // Notify clients of round actions and updated state
-            io.to(lobbyId).emit('round_actions', {
-                actions: lobby.gameState.actions,
-                round: lobby.gameState.round,
-                updatedState: gameManager.getGameStateForClient(lobby)
-            });
+            // Start a new round
+            lobby.gameState.round++;
             
-            // Send updated game state
-            io.to(lobbyId).emit('game_state', gameManager.getGameStateForClient(lobby));
+            // Reset finished status and actions for all players
+            lobby.gameState.finished = {};
+            lobby.gameState.actions = {};
             
-            // Prepare for next round
-            gameManager.prepareNextRound(lobby);
+            // Set new round start time
+            const now = new Date().toISOString();
+            lobby.gameState.roundStartTime = now;
             
-            // Emit new round start time
-            io.to(lobbyId).emit('round_start', { 
-                roundStartTime: lobby.gameState.roundStartTime 
-            });
-        } else {
-            // Notify who is still playing
-            const waiting = allPlayers.filter(p => !lobby.gameState.finished[p]);
-            io.to(lobbyId).emit('waiting_players', waiting);
+            // Signal the round summary
+            io.to(lobbyId).emit('all_finished', true);
+            
+            // After a delay, start the new round
+            setTimeout(() => {
+                // Broadcast new game state and round start
+                io.to(lobbyId).emit('game_state', gameManager.getGameStateForClient(lobby));
+                io.to(lobbyId).emit('round_start', { roundStartTime: now });
+                io.to(lobbyId).emit('all_finished', false);
+            }, 5000);
         }
-    });
-
-    socket.on('undo_finish', ({ lobbyId, playerName }) => {
-        const lobby = lobbyState.get(lobbyId);
-        
-        if (!lobby || !lobby.gameState) return;
-        
-        // Mark player as not finished
-        lobby.gameState.finished[playerName] = false;
-        
-        // Update waiting players list
-        const allPlayers = Object.keys(lobby.gameState.playerCountries);
-        const waiting = allPlayers.filter(p => !lobby.gameState.finished[p]);
-        
-        io.to(lobbyId).emit('waiting_players', waiting);
-    });
-
-    // --- GAME STATE REQUEST ---
-    socket.on('request_game_state', ({ lobbyId }) => {
-        const lobby = lobbyState.get(lobbyId);
-        
-        if (lobby && lobby.gameState) {
-            socket.emit('game_state', gameManager.getGameStateForClient(lobby));
-        } else {
-            socket.emit('game_state', null);
-        }
-    });
-
-    // --- PING/PONG SYSTEM ---
-    socket.on('ping', ({ lobbyId, playerName, ts }) => {
-        // Reply immediately with timestamp echo
-        socket.emit('pong', { ts });
-        
-        // The actual ping value will be reported by client
     });
     
-    socket.on('report_ping', ({ lobbyId, playerName, ping }) => {
-        if (!lobbyId || !playerName || typeof ping !== 'number') return;
-        
+    socket.on('undo_finish', ({ lobbyId, playerName }) => {
         const lobby = lobbyState.get(lobbyId);
+        if (!lobby || !lobby.gameState) return;
         
-        if (lobby && lobbyManager.updatePlayerPing(lobby, playerName, ping)) {
-            // Broadcast ping values to all players in the lobby
-            io.to(lobbyId).emit('lobby_pings', lobbyManager.getPlayerPings(lobby));
-        }
+        // Unmark player as finished
+        lobby.gameState.finished[playerName] = false;
+        
+        // Get updated list of waiting players
+        const waitingPlayers = Object.keys(lobby.gameState.playerCountries).filter(
+            player => !lobby.gameState.finished[player]
+        );
+        
+        // Broadcast updated waiting players list
+        io.to(lobbyId).emit('waiting_players', waitingPlayers);
     });
 
-    // --- DISCONNECT HANDLING ---
     socket.on('disconnect', () => {
-        if (socket.lobbyId && socket.playerName) {
-            const lobby = lobbyState.get(socket.lobbyId);
+        const { lobbyId, playerName } = socket;
+        console.log(`Player ${playerName} disconnected from lobby ${lobbyId}`);
+        
+        if (lobbyId && playerName) {
+            const lobby = lobbyState.get(lobbyId);
             
             if (lobby) {
-                // Remove player from lobby
-                lobbyManager.removePlayer(lobby, socket.playerName);
+                // Remove the player from the lobby
+                lobbyManager.removePlayer(lobby, playerName);
                 
-                // Notify remaining players
-                io.to(socket.lobbyId).emit('lobby', lobbyManager.getLobbyData(lobby));
-                
-                // Update ping data
-                if (lobby.pings && lobby.pings.has(socket.playerName)) {
-                    lobby.pings.delete(socket.playerName);
-                    io.to(socket.lobbyId).emit('lobby_pings', lobbyManager.getPlayerPings(lobby));
-                }
-                
-                // Remove empty lobbies (optional, keeps memory clean)
                 if (lobby.players.size === 0) {
-                    lobbyState.delete(socket.lobbyId);
+                    // Remove empty lobby
+                    lobbyState.delete(lobbyId);
+                } else {
+                    // Notify remaining players
+                    io.to(lobbyId).emit('lobby', lobbyManager.getLobbyData(lobby));
+                    
+                    // Send leave message
+                    const leaveMessage = {
+                        player: 'System',
+                        text: `${playerName} left the lobby`,
+                        time: Date.now(),
+                        to: 'all',
+                        lobbyId,
+                        status: 'sent',
+                        id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+                    };
+                    
+                    chatManager.storeMessage(lobby, leaveMessage);
+                    io.to(lobbyId).emit('room_message', leaveMessage);
                 }
             }
         }
-        
-        console.log('Socket disconnected:', socket.id);
     });
 });
 

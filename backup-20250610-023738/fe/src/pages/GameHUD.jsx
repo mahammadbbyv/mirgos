@@ -1,5 +1,5 @@
 import React from 'react';
-import { useGame } from '../context/GameContext-refactored';
+import { useGame } from '../context/GameContext';
 import LoadingState from '../components/UI/LoadingState';
 import GameHeader from '../components/Game/GameHeader';
 import CitiesPanel from '../components/Game/CitiesPanel';
@@ -9,7 +9,6 @@ import TechPanel from '../components/Game/TechPanel';
 import GameChat from '../components/Game/GameChat';
 import RoundSummary from '../components/Game/RoundSummary';
 import ActionFeedback from '../components/Game/ActionFeedback';
-import EnhancedGameBoard from '../components/Game/EnhancedGameBoard';
 
 /**
  * Main game HUD component that coordinates all game screens
@@ -98,12 +97,8 @@ const GameHUD = () => {  const {
         {/* Round Summary Modal */}
         <RoundSummary />
         
-        {/* Main Game Panels */}        <div className="flex flex-wrap gap-8 justify-center">
-          {/* Enhanced Game Board */}
-          <div className="w-full mb-6">
-            <EnhancedGameBoard playerId={gameState.playerId} />
-          </div>
-          
+        {/* Main Game Panels */}
+        <div className="flex flex-wrap gap-8 justify-center">
           {/* First Row - Country Management */}
           <div className="flex flex-wrap gap-8 justify-center w-full">
             {/* Cities Panel */}

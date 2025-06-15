@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mirgos Connection Test</title>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .log-container {
+            border: 1px solid #ccc;
+            padding: 10px;
+            height: 300px;
+            overflow-y: auto;
+            margin-bottom: 20px;
+            background-color: #f5f5f5;
+        }
+        .log-entry {
+            margin: 5px 0;
+            padding: 5px;
+            border-bottom: 1px solid #eee;
+        }
+        .success { color: green; }
+        .error { color: red; }
+        .info { color: blue; }
+        button {
+            padding: 10px;
+            margin: 5px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <h1>Mirgos Socket.IO Connection Test</h1>
+    
+    <div>
+        <label for="serverUrl">Server URL:</label>
+        <input type="text" id="serverUrl" value="http://localhost:3000" size="30">
+        <button id="connectBtn">Connect</button>
+        <button id="disconnectBtn">Disconnect</button>
+    </div>
+    
+    <div>
+        <h3>Connection Status: <span id="status">Disconnected</span></h3>
+    </div>
+    
+    <div class="log-container" id="logContainer"></div>
+    
+    <div>
+        <h3>Test Actions</h3>
+        <div>
+            <label for="playerName">Player Name:</label>
+            <input type="text" id="playerName" value="TestPlayer">
+            <button id="createLobbyBtn">Create Lobby</button>
+        </div>
+        <div>
+            <label for="lobbyId">Lobby ID:</label>
+            <input type="text" id="lobbyId">
+            <button id="joinLobbyBtn">Join Lobby</button>
+        </div>
+        <div>
+            <label for="country">Country:</label>
+            <select id="country">
+                <option value="France">France</option>
+                <option value="Germany">Germany</option>
+                <option value="Israel">Israel</option>
+                <option value="Kazakhstan">Kazakhstan</option>
+                <option value="North Korea">North Korea</option>
+                <option value="Russia">Russia</option>
+                <option value="Ukraine">Ukraine</option>
+                <option value="USA">USA</option>
+            </select>
+            <button id="updateCountryBtn">Update Country</button>
+        </div>
+        <div>
+            <button id="startGameBtn">Start Game</button>
+        </div>
+        <div>
+            <label for="message">Chat Message:</label>
+            <input type="text" id="message" value="Hello everyone!">
+            <button id="sendMsgBtn">Send Room Message</button>
+        </div>
+    </div>
+
+    <script>
+        let socket = null;
+        const logContainer = document.getElementById('logContainer');
+        const statusEl = document.getElementById('status');
+        
+        function log(message, type = 'info') {
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            entry.textContent = `${new Date().toLocaleTimeString()} - ${message}`;
+            logContainer.appendChild(entry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+        
+        function connect() {
+            const serverUrl = document.getElementById('serverUrl').value;
+            if (socket) {
+                socket.disconnect();
+                socket = null;
+            }
+            
+            try {
+                socket = io(serverUrl, { 
+                    transports: ['websocket', 'polling'],
+                    reconnectionAttempts: 5
+                });
+                
+                socket.on('connect', () => {
+                    statusEl.textContent = 'Connected';
+                    statusEl.style.color = 'green';
+                    log(`Connected to ${serverUrl}`, 'success');
+                    log(`Socket ID: ${socket.id}`, 'success');
+                });
+                
+                socket.on('disconnect', (reason) => {
+                    statusEl.textContent = 'Disconnected';
+                    statusEl.style.color = 'red';
+                    log(`Disconnected: ${reason}`, 'error');
+                });
+                
+                socket.on('connect_error', (error) => {
+                    statusEl.textContent = 'Connection Error';
+                    statusEl.style.color = 'red';
+                    log(`Connection error: ${error.message}`, 'error');
+                });
+                
+                // Game-specific events
+                socket.on('lobby_created', (data) => {
+                    log(`Lobby created with ID: ${data.lobbyId}`, 'success');
+                    document.getElementById('lobbyId').value = data.lobbyId;
+                });
+                
+                socket.on('lobby', (data) => {
+                    log(`Lobby update received: ${JSON.stringify(data)}`, 'info');
+                });
+                
+                socket.on('room_message', (msg) => {
+                    log(`Room message from ${msg.player}: ${msg.text || msg.msg}`, 'info');
+                });
+                
+                socket.on('error', (err) => {
+                    log(`Error: ${err.message}`, 'error');
+                });
+                
+                socket.on('start_countdown', (seconds) => {
+                    log(`Game starting in ${seconds}...`, 'info');
+                });
+                
+                socket.on('move_to_game', () => {
+                    log('Moving to game!', 'success');
+                });
+                
+                socket.on('game_state', (state) => {
+                    log(`Game state received: Round ${state.round}`, 'success');
+                    log(`Players: ${state.players?.join(', ')}`, 'info');
+                });
+                
+                socket.on('round_start', (data) => {
+                    log(`Round started at: ${new Date(data.roundStartTime).toLocaleString()}`, 'info');
+                });
+                
+            } catch (err) {
+                log(`Failed to initialize connection: ${err.message}`, 'error');
+            }
+        }
+        
+        // Button event listeners
+        document.getElementById('connectBtn').addEventListener('click', connect);
+        
+        document.getElementById('disconnectBtn').addEventListener('click', () => {
+            if (socket) {
+                socket.disconnect();
+                statusEl.textContent = 'Disconnected';
+                statusEl.style.color = 'red';
+                log('Manually disconnected', 'info');
+            }
+        });
+        
+        document.getElementById('createLobbyBtn').addEventListener('click', () => {
+            if (!socket || !socket.connected) {
+                log('Not connected', 'error');
+                return;
+            }
+            
+            const playerName = document.getElementById('playerName').value;
+            if (!playerName) {
+                log('Player name is required', 'error');
+                return;
+            }
+            
+            socket.emit('create_lobby', { playerName });
+            log(`Creating lobby as ${playerName}`, 'info');
+        });
+        
+        document.getElementById('joinLobbyBtn').addEventListener('click', () => {
+            if (!socket || !socket.connected) {
+                log('Not connected', 'error');
+                return;
+            }
+            
+            const playerName = document.getElementById('playerName').value;
+            const lobbyId = document.getElementById('lobbyId').value;
+            
+            if (!playerName || !lobbyId) {
+                log('Player name and lobby ID are required', 'error');
+                return;
+            }
+            
+            socket.emit('join_lobby', { lobbyId, playerName });
+            log(`Joining lobby ${lobbyId} as ${playerName}`, 'info');
+        });
+        
+        document.getElementById('updateCountryBtn').addEventListener('click', () => {
+            if (!socket || !socket.connected) {
+                log('Not connected', 'error');
+                return;
+            }
+            
+            const playerName = document.getElementById('playerName').value;
+            const lobbyId = document.getElementById('lobbyId').value;
+            const country = document.getElementById('country').value;
+            
+            if (!playerName || !lobbyId || !country) {
+                log('Player name, lobby ID, and country are required', 'error');
+                return;
+            }
+            
+            socket.emit('update_country', { lobbyId, playerName, country });
+            log(`Updating country to ${country}`, 'info');
+        });
+        
+        document.getElementById('startGameBtn').addEventListener('click', () => {
+            if (!socket || !socket.connected) {
+                log('Not connected', 'error');
+                return;
+            }
+            
+            const lobbyId = document.getElementById('lobbyId').value;
+            
+            if (!lobbyId) {
+                log('Lobby ID is required', 'error');
+                return;
+            }
+            
+            socket.emit('start_game', { lobbyId });
+            log(`Starting game in lobby ${lobbyId}`, 'info');
+        });
+        
+        document.getElementById('sendMsgBtn').addEventListener('click', () => {
+            if (!socket || !socket.connected) {
+                log('Not connected', 'error');
+                return;
+            }
+            
+            const playerName = document.getElementById('playerName').value;
+            const lobbyId = document.getElementById('lobbyId').value;
+            const message = document.getElementById('message').value;
+            
+            if (!playerName || !lobbyId || !message) {
+                log('Player name, lobby ID, and message are required', 'error');
+                return;
+            }
+            
+            const msgObj = {
+                player: playerName,
+                text: message,
+                to: 'all',
+                lobbyId,
+                time: Date.now()
+            };
+            
+            socket.emit('room_message', msgObj);
+            log(`Sending room message: ${message}`, 'info');
+        });
+    </script>
+</body>
+</html>

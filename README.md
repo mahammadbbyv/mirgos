@@ -8,9 +8,10 @@ This project is built with a modern web stack:
 
 * **Frontend:** React, Vite, Tailwind CSS
 * **Backend:** Node.js, Express.js
-* **Real-time Communication:** Socket.IO
+* **Real-time Communication:** Socket.IO with enhanced reliability
 * **Database:** MSSQL
 * **Authentication:** JWT (JSON Web Tokens)
+* **Enhanced Visuals:** Interactive Game Board with improved UX
 
 ### ✨ Key Technical Features
 
@@ -20,7 +21,40 @@ This project is built with a modern web stack:
 * **Real-time Chat:** Facilitates communication between players within the game (all chat and private messages).
 * **Modular Frontend:** Components for Game HUD, Lobby, Chat, etc., built with React.
 * **RESTful API & WebSockets:** Backend powered by Node.js/Express for handling game logic, data persistence, and real-time updates via Socket.IO.
+* **Enhanced Socket Reliability:** Custom hook for improved connection management with automatic retries and diagnostics.
+* **Interactive Game Board:** Visual representation of countries and cities with interactive controls.
+* **Advanced Diagnostics:** Built-in tools for diagnosing and resolving connection issues.
 * **Localization:** Designed to support multiple languages.
+
+---
+
+## 🔌 Enhanced Socket Connection
+
+The game uses a custom `useSocket` hook for improved reliability in real-time communications:
+
+* **Automatic reconnection:** Handles temporary disconnections gracefully
+* **Error resilience:** Better error handling and reporting
+* **Request retries:** Automatically retries failed operations
+* **Connection monitoring:** Real-time status tracking
+* **Performance optimization:** Reduces latency and improves responsiveness
+
+## 🎮 Enhanced Game Interface
+
+The new `EnhancedGameBoard` component provides:
+
+* **Visual game map:** Interactive representation of countries and cities
+* **Real-time updates:** See game state changes immediately
+* **Streamlined controls:** Easier interaction for attacks and upgrades
+* **Improved feedback:** Visual cues for actions and outcomes
+* **Responsive design:** Works well on different screen sizes
+
+## 🛠️ Diagnostic Tools
+
+Included diagnostic utilities help identify and resolve connection issues:
+
+* **socket-diagnostics.js:** JavaScript tool for detailed connection analysis
+* **diagnose-socket.ps1:** PowerShell script for network and system diagnosis
+* **Connection monitoring:** Real-time connection status in the game UI
 
 ---
 

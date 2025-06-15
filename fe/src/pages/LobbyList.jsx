@@ -1,7 +1,7 @@
 /* eslint-disable react-hooks/exhaustive-deps */
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { loadLobbyList, joinLobby } from '../utils/lobby';
+import { loadLobbyList, joinLobby, connectToServer, getSocket } from '../utils/lobby-refactored';
 import BarLoader from 'react-spinners/BarLoader';
 
 export default function LobbyList({ setCurrentLobby }) {
@@ -9,6 +9,8 @@ export default function LobbyList({ setCurrentLobby }) {
   const [lobbies, setLobbies] = useState([]);
   const navigate = useNavigate();
   const [connected, setConnected] = useState(false);
+  const [joiningLobby, setJoiningLobby] = useState(false);
+  const [joinError, setJoinError] = useState(null);
 
   const handleSetLobbies = (data) => {
     console.log('Lobbies data:', data);
@@ -20,27 +22,48 @@ export default function LobbyList({ setCurrentLobby }) {
       setLobbies(data);
     }
   };
-
   useEffect(() => {
     const playerName = localStorage.getItem('playerName');
     if (!playerName) {
       navigate('/login');
     } else {
       setName(playerName);
-      setConnected(true);
-      loadLobbyList(handleSetLobbies);
+      
+      // Initialize socket connection
+      try {
+        connectToServer();
+        
+        // Wait briefly for socket to establish connection
+        setTimeout(() => {
+          setConnected(true);
+          loadLobbyList(handleSetLobbies);
+        }, 500);
+      } catch (error) {
+        console.error('Failed to connect to server:', error);
+        setJoinError('Failed to connect to server. Please refresh the page and try again.');
+      }
     }
   }, []);
-
   return connected ? (
     <div className="p-6 text-white bg-gray-800 min-h-screen">
       <h2 className="text-2xl mb-6">Welcome, {name}!</h2>
+      {joinError && (
+        <div className="bg-red-600 text-white p-2 mb-4 rounded text-center">
+          {joinError}
+          <button 
+            className="ml-2 underline" 
+            onClick={() => setJoinError(null)}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
       <div className="flex justify-between items-center mb-6">
-        <h3 className="text-xl">Available Lobbies</h3>
-        <button
+        <h3 className="text-xl">Available Lobbies</h3>        <button
           onClick={() => {
             const lobbyId = `${name}'s Lobby`;
             setCurrentLobby(lobbyId);
+            localStorage.setItem('currentLobby', lobbyId); // Ensure lobbyId is saved for GameHUD
             navigate(`/lobby/${lobbyId}/waiting-room`);
           }}
           className="bg-green-600 hover:bg-green-500 px-4 py-2 rounded"
@@ -62,17 +85,46 @@ export default function LobbyList({ setCurrentLobby }) {
                 <span className="ml-2 text-sm text-gray-300">
                   ({lobby.players.length} player{lobby.players.length !== 1 ? 's' : ''})
                 </span>
-              </div>
-              <button
+              </div>              <button
                 className="bg-blue-600 hover:bg-blue-500 px-3 py-1 rounded"
+                disabled={joiningLobby}
                 onClick={async () => {
-                  await joinLobby(lobby.id);
-                  setCurrentLobby(lobby.id);
-                  localStorage.setItem('currentLobbyId', lobby.id); // Ensure lobbyId is saved for GameHUD
-                  navigate(`/lobby/${lobby.id}/waiting-room`);
+                  try {
+                    // Reset any previous errors
+                    setJoinError(null);
+                    setJoiningLobby(true);
+                    
+                    // Ensure socket is connected before joining
+                    connectToServer();
+                    
+                    // Wait for socket to be properly connected
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                    
+                    // Get the active socket
+                    const socket = getSocket();
+                    
+                    if (!socket || !socket.connected) {
+                      throw new Error('Socket is not connected. Please try again.');
+                    }
+                    
+                    console.log(`[${new Date().toLocaleTimeString()}] 🔌 Joining with socket ID: ${socket.id}`);
+                    
+                    // Try to join the lobby
+                    await joinLobby(lobby.id, name);
+                    
+                    // If successful, update the UI and navigate
+                    setCurrentLobby(lobby.id);
+                    localStorage.setItem('currentLobby', lobby.id); // Ensure lobbyId is saved for GameHUD
+                    navigate(`/lobby/${lobby.id}/waiting-room`);
+                  } catch (error) {
+                    console.error('Failed to join lobby:', error);
+                    setJoinError(error.message || 'Failed to join lobby. Please try again.');
+                  } finally {
+                    setJoiningLobby(false);
+                  }
                 }}
               >
-                Join
+                {joiningLobby ? 'Joining...' : 'Join'}
               </button>
             </li>
           ))
